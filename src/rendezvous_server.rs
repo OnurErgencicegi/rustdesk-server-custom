@@ -480,6 +480,7 @@ impl RendezvousServer {
         key: &str,
         ws: bool,
     ) -> bool {
+        log::info!("RemoteSupport: handle_tcp bytes_len={} addr={}", bytes.len(), addr);
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
             match msg_in.union {
                 Some(rendezvous_message::Union::PunchHoleRequest(ph)) => {
@@ -679,15 +680,26 @@ impl RendezvousServer {
         ws: bool,
     ) -> ResultType<(RendezvousMessage, Option<SocketAddr>)> {
         let mut ph = ph;
-        if !key.is_empty() && ph.licence_key != key {
-            log::warn!("Authentication failed from {} for peer {} - invalid key", addr, ph.id);
-            let mut msg_out = RendezvousMessage::new();
-            msg_out.set_punch_hole_response(PunchHoleResponse {
-                failure: punch_hole_response::Failure::LICENSE_MISMATCH.into(),
-                ..Default::default()
-            });
-            return Ok((msg_out, None));
-        }
+        log::info!(
+            "RemoteSupport: punch_hole_request alindi - id={} addr={} token_len={}",
+            ph.id, addr, ph.token.len()
+        );
+        // auth-server'dan alınan kısa ömürlü conn_token olarak doğruluyoruz.
+        match crate::remotesupport_auth::verify_conn_token(&ph.token, &ph.id).await {
+            Ok(true) => {}
+            _ => {
+                log::warn!(
+                    "RemoteSupport: conn_token dogrulanamadi (bos veya gecersiz) - {} reddedildi",
+                    addr
+                );
+                let mut msg_out = RendezvousMessage::new();
+                msg_out.set_punch_hole_response(PunchHoleResponse {
+                    failure: punch_hole_response::Failure::LICENSE_MISMATCH.into(),
+                    ..Default::default()
+                });
+                return Ok((msg_out, None));
+            }
+        }  
         let id = ph.id;
         // punch hole request from A, relay to B,
         // check if in same intranet first,
